@@ -24,14 +24,13 @@ public:
 };
 
 // Threads
-vector<pair<int, int>> colorThreads(Graph& graph, int no_threads);
-void colorInRange(Graph& graph, int start, int finish);
-void colorThreadsThreads(Graph& graph, int no_threads);
-void colorInRangeThreads(Graph& graph, int start, int finish, int max_degree);
+void colorThreads(Graph& graph, int no_threads);
+void colorPartitionThreads(Graph& graph, int start, int finish, int max_degree);
 
 // MPI
-void colorMPIMaster(Graph& graph);
-void colorMPISlave(Graph& graph);
+void sendVector(const vector<int>& vector, int dest);
+vector<int> receiveVector(int src);
+void colorInternalsMPI(Graph& graph, int start, int finish, int max_degree);
 
 
 #endif //PDP_PROJECT_TEAM_GRAPH_H

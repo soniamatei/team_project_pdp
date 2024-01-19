@@ -24,70 +24,7 @@ void Graph::addEdge(int vertex_1, int vertex_2) {
 
 
 /* ALGORITHMS */
-vector<pair<int, int>> colorThreads(Graph& graph, int no_threads) {
-    ThreadPool thread_pool{no_threads};
-
-    for (int thread_index = 0; thread_index < no_threads; thread_index++) {
-        int start = thread_index * graph.no_vertices / no_threads;
-        int finish = (thread_index + 1) * graph.no_vertices / no_threads;
-        cout << start << " " << finish << endl;
-        thread_pool.enqueue([&graph, start, finish]() {
-            colorInRange(graph, start, finish);
-        });
-    }
-
-    thread_pool.close();
-
-    vector<pair<int, int>> node_color;
-
-    // create a vector with the nodes and corresponding colors
-    for (int i = 0; i < graph.no_vertices; ++i) {
-        cout << graph.vertices[i].color << endl;
-        node_color.emplace_back(i, graph.vertices[i].color);
-    }
-
-    return node_color;
-}
-
-void colorInRange(Graph& graph, int start, int finish) {
-
-    // iterate through vertices in the given range
-    for (int vertex = start; vertex < finish; vertex++) {
-        if (graph.vertices[vertex].color == -1) {
-
-            // find first available color
-            // fictional color represented as a number in range [0, n)
-            for (int color_index = 0; color_index < graph.no_vertices; color_index++) {
-
-                bool available = true;
-                for (int i = 0; i < graph.no_vertices; i++) {
-
-                    // if there is an adjacent node with the given color, go to next color
-                    if (graph.adj[vertex][i] && graph.vertices[i].color == color_index) {
-                        available = false;
-                        break;
-                    }
-                }
-
-                if (available) {
-
-                    // verify one last time if the color hadn't been written since the check
-                    unique_lock<mutex> lock{graph.vertices[vertex].mtx};
-                    cout << "a";
-                    if (graph.vertices[vertex].color == -1) {
-                        graph.vertices[vertex].color = color_index;
-                        cout << "b" << graph.vertices[vertex].color;
-                        lock.unlock();
-                        break;
-                    }
-                    lock.unlock();
-                }
-            }
-        }
-    }
-}
-
-void colorThreadsThreads(Graph& graph, int no_threads) {
+void colorThreads(Graph& graph, int no_threads) {
     if (graph.no_vertices < no_threads) {
         cout << "Number of threads exceeds the number of vertices!";
         return;
@@ -107,7 +44,7 @@ void colorThreadsThreads(Graph& graph, int no_threads) {
         int finish = ((thread_index + 1) * graph.no_vertices) / no_threads;
         cout << thread_index << " thread is coloring vertices " << start << " - " << finish - 1 << endl;
         thread_pool.enqueue([&graph, start, finish, max_degree]() {
-            colorInRangeThreads(graph, start, finish, max_degree);
+            colorPartitionThreads(graph, start, finish, max_degree);
         });
     }
 
@@ -115,7 +52,7 @@ void colorThreadsThreads(Graph& graph, int no_threads) {
     thread_pool.close();
 }
 
-void colorInRangeThreads(Graph& graph, int start, int finish, int max_degree) {
+void colorPartitionThreads(Graph& graph, int start, int finish, int max_degree) {
     // identify boundary & internal vertices
     set<int> boundary_vertices;
     set<int> internal_vertices;
@@ -198,10 +135,78 @@ void colorInRangeThreads(Graph& graph, int start, int finish, int max_degree) {
     }
 }
 
-void colorMPIMaster(Graph& graph) {
 
+void sendVector(const std::vector<int>& vector, int dest) {
+    // convert the vector to an array
+    int size = vector.size();
+    const int* data = vector.data();
+
+    // send the size of the vector first
+    MPI_Send(&size, 1, MPI_INT, dest, 0, MPI_COMM_WORLD);
+
+    // send the actual data
+    MPI_Send(data, size, MPI_INT, dest, 1, MPI_COMM_WORLD);
 }
 
-void colorMPISlave(Graph& graph) {
+std::vector<int> receiveVector(int src) {
+    int size;
 
+    // receive the size of the vector first
+    MPI_Recv(&size, 1, MPI_INT, src, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+    // receive the actual data
+    std::vector<int> receivedData(size);
+    MPI_Recv(receivedData.data(), size, MPI_INT, src, 1, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+    return receivedData;
+}
+
+void colorInternalsMPI(Graph& graph, int start, int finish, int max_degree) {
+    // identify boundary & internal vertices
+    set<int> internal_vertices;
+    for (int partition_vertex = start; partition_vertex < finish; ++partition_vertex) {
+        bool is_boundary = false;
+        for (int vertex = 0; vertex < graph.no_vertices; ++vertex) {
+            // skip self
+            if (partition_vertex == vertex) {
+                continue;
+            }
+
+            // check if there is an edge between partition's vertex and other vertex
+            // and the other vertex is not in the partition
+            if (graph.adj[partition_vertex][vertex] == 1 && (vertex < start || vertex >= finish)) {
+                is_boundary = true;
+                break;
+            }
+        }
+
+        if (!is_boundary) {
+            internal_vertices.insert(partition_vertex);
+        }
+    }
+
+    // color internal vertices
+    for (auto internal_vertex : internal_vertices) {
+        // find colors of adjacent vertices
+        set<int> adj_colors;
+        for (int vertex = 0; vertex < graph.no_vertices; ++vertex) {
+            // skip self
+            if (internal_vertex == vertex) {
+                continue;
+            }
+
+            // add color to the used one
+            if (graph.adj[internal_vertex][vertex] == 1 && graph.vertices[vertex].color != -1) {
+                adj_colors.insert(graph.vertices[vertex].color);
+            }
+        }
+
+        // assign color
+        for (int color = 0; color <= max_degree; ++color) {
+            if (adj_colors.find(color) == adj_colors.end()) {
+                graph.vertices[internal_vertex].color = color;
+                break;
+            }
+        }
+    }
 }
