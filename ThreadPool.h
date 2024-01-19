@@ -13,7 +13,7 @@ using namespace std;
 class ThreadPool {
 public:
     explicit ThreadPool(int nrThreads);
-    void enqueue(function<void()> func);
+    void enqueue(const function<void()>& func);
     void close();
     ~ThreadPool();
 

@@ -1,51 +1,55 @@
 #include "ThreadPool.h"
 #include "iostream"
 
-ThreadPool::ThreadPool(int nrThreads) : end(false) {
-
-    threads.reserve(nrThreads);
+ThreadPool::ThreadPool(int nrThreads) {
+    end = false;
     for (int i = 0; i < nrThreads; i++) {
-        threads.emplace_back([this]() {this->run();});
+        threads.emplace_back(&ThreadPool::run, this);
     }
 }
 
-void ThreadPool::enqueue(function<void()> func) {
+ThreadPool::~ThreadPool() {
+    close();
+}
 
-    unique_lock<mutex> lock(mtx);
-    que.push(std::move(func));
+void ThreadPool::enqueue(const function<void()>& func) {
+    {
+        std::lock_guard<mutex> lock{mtx};
+        que.push(func);
+    }
     cond_var.notify_one();
 }
 
 void ThreadPool::close() {
+    if (end) {
+        return;
+    }
 
-    unique_lock<mutex> lock(mtx);
     end = true;
     cond_var.notify_all();
-}
-
-ThreadPool::~ThreadPool() {
-
-    close();
-    for(thread& t : threads) {
-        t.join();
+    while (!threads.empty()) {
+        auto& thread = threads.back();
+        thread.join();
+        threads.pop_back();
     }
 }
 
 void ThreadPool::run() {
-
-    while(true) {
-        function<void()> execute;
-
-        unique_lock<mutex> lock(mtx);
-        while(!que.empty() && !end) {
+    while (true) {
+        unique_lock<mutex> lock{mtx};
+        while (que.empty() && !end) {
             cond_var.wait(lock);
         }
 
-        if (que.empty()) {
+        if (end && que.empty()) {
             return;
         }
-        execute = std::move(que.front());
+
+        function<void()> execute = que.front();
         que.pop();
+
+        lock.unlock();
+
         execute();
     }
 }
